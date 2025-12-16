@@ -13,6 +13,9 @@
 *.pkl
 *.joblib
 *.dat
+*.zip
+*.tar
+*.gz
 
 # Directories to ignore
 datasets/
@@ -21,3 +24,4 @@ preprocessing/dlib_models/
 results*/
 .cache/
 prediction/
+tools/models/
