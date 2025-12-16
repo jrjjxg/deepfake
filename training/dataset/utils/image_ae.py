@@ -2,8 +2,11 @@ from torch import nn
 from torch.autograd import Variable
 import torch
 import torch.nn.functional as F
+import os
 
 import torchvision.models as models
+
+os.environ.setdefault("TORCH_HOME", r"E:\DeepfakeBench\.cache\torch")
 
 def add_gaussian_noise(ins, mean=0, stddev=0.1):
     noise = ins.data.new(ins.size()).normal_(mean, stddev)

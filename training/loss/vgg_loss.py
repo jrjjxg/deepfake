@@ -1,5 +1,6 @@
 """A VGG-based perceptual loss function for PyTorch."""
 
+import os
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -8,6 +9,8 @@ import torch
 import torch.nn as nn
 from .abstract_loss_func import AbstractLossClass
 from metrics.registry import LOSSFUNC
+
+os.environ.setdefault("TORCH_HOME", r"E:\DeepfakeBench\.cache\torch")
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

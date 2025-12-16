@@ -2,7 +2,7 @@
 log_dir: /mntcephfs/lab_data/yuanxinhang/benchmark_results/logs_final/meso4
 
 # model setting
-pretrained: false   # path to a pre-trained model, if using one
+pretrained: ./training/weights/meso4_best.pth   # path to a pre-trained model, if using one
 model_name: meso4   # model name
 backbone_name: meso4  # backbone name
 

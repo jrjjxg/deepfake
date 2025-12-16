@@ -41,6 +41,8 @@ import torch.utils.model_zoo as model_zoo
 from torch.nn import DataParallel
 from torch.utils.tensorboard import SummaryWriter
 
+os.environ.setdefault("TORCH_HOME", r"E:\DeepfakeBench\.cache\torch")
+
 from metrics.base_metrics_class import calculate_metrics_for_train
 
 from .base_detector import AbstractDetector

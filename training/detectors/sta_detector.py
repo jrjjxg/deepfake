@@ -26,6 +26,7 @@ Reference:
 """
 
 import logging
+import os
 from collections import OrderedDict
 
 import clip
@@ -38,6 +39,8 @@ from einops import rearrange
 from loss import LOSSFUNC
 from metrics.base_metrics_class import calculate_metrics_for_train
 from sklearn import metrics
+
+os.environ.setdefault("TORCH_HOME", r"E:\DeepfakeBench\.cache\torch")
 
 from .base_detector import AbstractDetector
 

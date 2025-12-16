@@ -15,6 +15,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from metrics.registry import BACKBONE
 
+os.environ.setdefault("TORCH_HOME", r"E:\DeepfakeBench\.cache\torch")
+
 logger = logging.getLogger(__name__)
 
 @BACKBONE.register_module(module_name="resnet34")

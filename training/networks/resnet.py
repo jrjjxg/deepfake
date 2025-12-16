@@ -4,12 +4,15 @@ Created on 18-5-21 下午5:26
 
 @author: ronghuaiyang
 """
+import os
 import torch
 import torch.nn as nn
 import math
 import torch.utils.model_zoo as model_zoo
 import torch.nn.utils.weight_norm as weight_norm
 import torch.nn.functional as F
+
+os.environ.setdefault("TORCH_HOME", r"E:\DeepfakeBench\.cache\torch")
 
 
 # __all__ = ['ResNet', 'resnet18', 'resnet34', 'resnet50', 'resnet101',

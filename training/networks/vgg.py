@@ -1,9 +1,12 @@
 """A VGG-based perceptual loss function for PyTorch."""
 
+import os
 import torch
 from torch import nn
 from torch.nn import functional as F
 from torchvision import models, transforms
+
+os.environ.setdefault("TORCH_HOME", r"E:\DeepfakeBench\.cache\torch")
 
 
 class Lambda(nn.Module):

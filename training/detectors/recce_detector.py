@@ -49,6 +49,8 @@ from networks import BACKBONE
 from loss import LOSSFUNC
 import logging
 
+os.environ.setdefault("TORCH_HOME", r"E:\DeepfakeBench\.cache\torch")
+
 logger = logging.getLogger(__name__)
 
 encoder_params = {

@@ -1,0 +1,18 @@
+======================================================================
+Image Feature Detector - Inference Results
+======================================================================
+
+Model: E:/DeepfakeBench/image_feature_svm.joblib
+Dataset: E:/DeepfakeBench/datasets/rgb/UADFV
+Dataset Type: uadfv
+
+Accuracy:    0.7041
+Precision:   0.7174
+Recall:      0.6735
+F1-Score:    0.6947
+AUC-ROC:     0.7859
+Specificity: 0.7347
+
+Confusion Matrix:
+  TN:    36  FP:    13
+  FN:    16  TP:    33

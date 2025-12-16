@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepfakeBench | AI Detection & Swapping</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+
+<body>
+    <div class="app-wrapper">
+        <header class="main-header">
+            <div class="logo">
+                <span class="logo-text">AI 换脸与检测</span>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <nav class="tabs-nav">
+                <button class="tab-btn active" onclick="showTab('detect')">
+                    伪造检测
+                </button>
+                <button class="tab-btn" onclick="showTab('swap')">
+                    人脸替换
+                </button>
+            </nav>
+
+            <!-- 检测页面 -->
+            <div id="detect" class="tab-content active">
+                <div class="card">
+                    <div class="card-title">选择检测模型</div>
+                    <!-- Hidden input to store value -->
+                    <input type="hidden" id="model-select">
+                    <!-- Custom Visual Selector -->
+                    <div id="model-selector-ui" class="model-ui">
+                        <div class="model-categories" id="model-categories"></div>
+                        <div class="model-options-grid" id="model-options-grid"></div>
+                    </div>
+
+                    <div class="card-title">上传待检测图片</div>
+                    <div class="upload-box" id="detect-drop">
+                        <input type="file" id="detect-file" accept="image/*" hidden>
+                        <div class="upload-icon">
+                            <svg width="40" height="40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                                    d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                                    d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                            </svg>
+                        </div>
+                        <div class="upload-text"><strong>点击上传</strong> 或拖拽图片到这里</div>
+                        <img id="detect-preview" style="display:none">
+                    </div>
+
+                    <button class="btn" onclick="runDetect()" id="detect-btn">开始检测</button>
+
+                    <div id="detect-result" class="result"></div>
+
+                    <!-- 可视化区域 -->
+                    <div id="visualization-section" class="visualization-section" style="display:none;">
+                        <div class="card-title visualization-header">
+                            <span>🔍 检测可视化</span>
+                            <label class="toggle-label">
+                                <input type="checkbox" id="show-visualization" checked>
+                                <span class="toggle-text">显示可视化</span>
+                            </label>
+                        </div>
+                        <div id="visualization-description" class="visualization-description"></div>
+                        <div id="visualization-grid" class="visualization-grid"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 换脸页面 -->
+            <div id="swap" class="tab-content">
+                <div class="card">
+                    <div class="card-title">选择换脸引擎</div>
+                    <select id="swap-backend">
+                        <option value="insightface">InsightFace (快速)</option>
+                        <option value="simswap">SimSwap (高质量)</option>
+                        <option value="ghost_remote">GHOST Remote</option>
+                    </select>
+
+                    <div class="card-title">上传图片</div>
+                    <div class="two-col">
+                        <div>
+                            <label>源人脸（提供脸部）</label>
+                            <div class="upload-box" id="source-drop">
+                                <input type="file" id="source-file" accept="image/*" hidden>
+                                <div class="upload-icon">
+                                    <svg width="40" height="40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                                            d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                    </svg>
+                                </div>
+                                <div class="upload-text"><strong>点击上传</strong></div>
+                                <img id="source-preview" style="display:none">
+                            </div>
+                        </div>
+                        <div>
+                            <label>目标图片（接收脸部）</label>
+                            <div class="upload-box" id="target-drop">
+                                <input type="file" id="target-file" accept="image/*" hidden>
+                                <div class="upload-icon">
+                                    <svg width="40" height="40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                                            d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                    </svg>
+                                </div>
+                                <div class="upload-text"><strong>点击上传</strong></div>
+                                <img id="target-preview" style="display:none">
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Auto Detection Toggle -->
+                    <div class="auto-detect-section">
+                        <label class="toggle-label">
+                            <input type="checkbox" id="auto-detect-toggle" checked>
+                            <span class="toggle-text">换脸后自动检测伪造</span>
+                        </label>
+                        <select id="swap-detect-model" class="model-mini-select">
+                            <!-- Will be populated by JS -->
+                        </select>
+                        <button class="btn-secondary" id="redetect-btn" onclick="redetectSwapResult()"
+                            style="display:none;">重新检测</button>
+                    </div>
+
+                    <button class="btn" onclick="runSwap()" id="swap-btn">开始换脸</button>
+
+                    <div id="swap-result" class="result"></div>
+
+                    <!-- Detection result after swap -->
+                    <div id="swap-detect-result" class="result detection-result"></div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/js/script.js"></script>
+</body>
+
+</html>

@@ -52,6 +52,8 @@ from loss import LOSSFUNC
 
 import torchvision.models as models
 
+os.environ.setdefault("TORCH_HOME", r"E:\DeepfakeBench\.cache\torch")
+
 @DETECTOR.register_module(module_name='capsule_net')
 class CapsuleNetDetector(AbstractDetector):
     def __init__(self, config):

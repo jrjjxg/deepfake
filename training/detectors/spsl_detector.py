@@ -69,23 +69,51 @@ class SpslDetector(AbstractDetector):
 
         # To get a good performance, use the ImageNet-pretrained Xception model
         state_dict = torch.load(config['pretrained'])
+        
+        # 处理 pointwise 层
         for name, weights in state_dict.items():
             if 'pointwise' in name:
                 state_dict[name] = weights.unsqueeze(-1).unsqueeze(-1)
+        
+        # 移除 fc 层
         state_dict = {k:v for k, v in state_dict.items() if 'fc' not in k}
 
-        # remove conv1 from state_dict
-        conv1_data = state_dict.pop('conv1.weight')
+        # 提取 conv1 数据（支持两种格式）
+        conv1_data = None
+        if 'conv1.weight' in state_dict:
+            conv1_data = state_dict['conv1.weight'].clone()
+            del state_dict['conv1.weight']
+        elif 'backbone.conv1.weight' in state_dict:
+            conv1_data = state_dict['backbone.conv1.weight'].clone()
+            # 移除所有 backbone. 前缀
+            new_state_dict = {}
+            for k, v in state_dict.items():
+                new_key = k.replace('backbone.', '')
+                if new_key != 'conv1.weight':  # 跳过 conv1
+                    new_state_dict[new_key] = v
+            state_dict = new_state_dict
+        
+        if conv1_data is None:
+            raise KeyError("Cannot find conv1.weight in state_dict. Available keys: " + str(list(state_dict.keys())[:10]))
 
-        backbone.load_state_dict(state_dict, False)
-        logger.info('Load pretrained model from {}'.format(config['pretrained']))
-
-        # copy on conv1
-        # let new conv1 use old param to balance the network
+        # 先创建新的 conv1（4通道输入）
         backbone.conv1 = nn.Conv2d(4, 32, 3, 2, 0, bias=False)
+        
+        # 初始化新 conv1 的权重
         avg_conv1_data = conv1_data.mean(dim=1, keepdim=True)  # average across the RGB channels
         backbone.conv1.weight.data = avg_conv1_data.repeat(1, 4, 1, 1)  # repeat the averaged weights across the 4 new channels
-        logger.info('Copy conv1 from pretrained model')
+        
+        # 加载其余权重（使用 strict=False 忽略不匹配的层）
+        missing_keys, unexpected_keys = backbone.load_state_dict(state_dict, strict=False)
+        
+        if missing_keys:
+            logger.info(f'Missing keys (expected): {missing_keys[:5]}...')
+        if unexpected_keys:
+            logger.info(f'Unexpected keys: {unexpected_keys[:5]}...')
+        
+        logger.info('Load pretrained model from {}'.format(config['pretrained']))
+        logger.info('Initialized conv1 for 4-channel input (RGB + Phase)')
+        
         return backbone
 
     def build_loss(self, config):

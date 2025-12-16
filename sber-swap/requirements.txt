@@ -1,0 +1,16 @@
+numpy
+-f https://download.pytorch.org/whl/torch_stable.html
+torch
+-f https://download.pytorch.org/whl/torch_stable.html
+torchvision
+opencv-python
+onnx==1.9.0
+onnxruntime-gpu==1.4.0
+mxnet==1.7.0.post2
+scikit-image
+insightface==0.2.1
+requests==2.25.1
+kornia==0.5.4
+dill
+fastapi
+uvicorn

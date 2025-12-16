@@ -2,6 +2,22 @@
 *__pycache__*
 *.vscode*
 *.pyc
+
+# Model Weights & Large Files
 *.pth
 *.pt
+*.ckpt
+*.onnx
+*.h5
+*.weights
+*.pkl
+*.joblib
 *.dat
+
+# Directories to ignore
+datasets/
+weights/
+preprocessing/dlib_models/
+results*/
+.cache/
+prediction/

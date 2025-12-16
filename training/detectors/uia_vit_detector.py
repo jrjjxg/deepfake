@@ -26,6 +26,7 @@ Reference:
 Codes are modified based on GitHub repo https://github.com/wany0824/UIA-ViT
 """
 from functools import partial
+import os
 
 import torch
 import torch.nn as nn
@@ -36,6 +37,8 @@ from sklearn.covariance import LedoitWolf
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
 from .base_detector import AbstractDetector
+
+os.environ.setdefault("TORCH_HOME", r"E:\DeepfakeBench\.cache\torch")
 
 
 @DETECTOR.register_module(module_name='uia_vit')

@@ -26,6 +26,7 @@ Reference:
 """
 
 import logging
+import os
 
 import math
 import torch
@@ -40,6 +41,8 @@ from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 from torch.hub import load_state_dict_from_url
 
 from .base_detector import AbstractDetector
+
+os.environ.setdefault("TORCH_HOME", r"E:\DeepfakeBench\.cache\torch")
 
 logger = logging.getLogger(__name__)
 

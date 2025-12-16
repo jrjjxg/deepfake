@@ -1,3 +1,4 @@
+import os
 import torch
 import math
 import torch.nn as nn
@@ -11,6 +12,8 @@ from skimage import measure
 from skimage.transform import PiecewiseAffineTransform, warp
 from torch.autograd import Variable
 from scipy.ndimage import binary_erosion, binary_dilation
+
+os.environ.setdefault("TORCH_HOME", r"E:\DeepfakeBench\.cache\torch")
 
 from dataset.pair_dataset import pairDataset
 from dataset.utils.color_transfer import color_transfer
