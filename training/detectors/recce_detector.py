@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 encoder_params = {
     "xception": {
         "features": 2048,
-        "init_op": partial(xception, pretrained=True)
+        "init_op": partial(xception, pretrained=False)
     }
 }
 

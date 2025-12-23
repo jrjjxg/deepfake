@@ -131,7 +131,8 @@ class CapsuleNetDetector(AbstractDetector):
 class VggExtractor(nn.Module):
     def __init__(self, train=False):
         super(VggExtractor, self).__init__()
-        self.vgg_1 = self.Vgg(models.vgg19(pretrained=True), 0, 18)
+        # Disable download, we will load weights from checkpoint
+        self.vgg_1 = self.Vgg(models.vgg19(pretrained=False), 0, 18)
         if train:
             self.vgg_1.train(mode=True)
             self.freeze_gradient()

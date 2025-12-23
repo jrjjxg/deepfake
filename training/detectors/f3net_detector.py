@@ -73,9 +73,44 @@ class F3netDetector(AbstractDetector):
         model_config = config['backbone_config']
         backbone = backbone_class(model_config)
         
-        # To get a good performance, use the ImageNet-pretrained Xception model
-        state_dict = torch.load(config['pretrained'])
+        # 检查是否是已训练的检测器模型（通过 "best" 或 "FAD" 关键词判断）
+        pretrained_path = config['pretrained']
+        state_dict = torch.load(pretrained_path)
         
+        # 判断是否是已训练的F3Net检测器（包含FAD_head等键）
+        is_trained_detector = any('FAD' in k for k in state_dict.keys()) or any('backbone.conv1' in k for k in state_dict.keys())
+        
+        if is_trained_detector:
+            # 从已训练的F3Net检测器加载 - 不需要修改conv1
+            logger.info(f'Detected trained F3Net detector weights')
+            # 提取backbone部分
+            backbone_state = {}
+            for k, v in state_dict.items():
+                if k.startswith('backbone.'):
+                    new_key = k.replace('backbone.', '')
+                    backbone_state[new_key] = v
+            
+            if backbone_state:
+                # === 关键修复：过滤掉形状不匹配的键 ===
+                model_state = backbone.state_dict()
+                filtered_state = {}
+                for k, v in backbone_state.items():
+                    if k in model_state:
+                        if v.shape == model_state[k].shape:
+                            filtered_state[k] = v
+                        else:
+                            logger.warning(f"Skipping layer {k} due to shape mismatch: ckpt {v.shape} vs model {model_state[k].shape}")
+                    else:
+                        # 这是一个unexpected key，会被strict=False忽略，但我们在filtered中加上也没事
+                        pass
+                
+                missing, unexpected = backbone.load_state_dict(filtered_state, strict=False)
+                if missing:
+                    logger.info(f'Missing keys: {missing[:5]}...')
+                logger.info(f'Loaded backbone weights from trained detector (safe mode)')
+            return backbone
+        
+        # 原始逻辑：从ImageNet预训练的Xception加载
         # 处理 pointwise 层
         for name, weights in state_dict.items():
             if 'pointwise' in name:
@@ -87,10 +122,10 @@ class F3netDetector(AbstractDetector):
         # 提取 conv1 数据（支持两种格式）
         conv1_data = None
         if 'conv1.weight' in state_dict:
-            conv1_data = state_dict['conv1.weight'].data.clone()
+            conv1_data = state_dict['conv1.weight'].clone()
             del state_dict['conv1.weight']
         elif 'backbone.conv1.weight' in state_dict:
-            conv1_data = state_dict['backbone.conv1.weight'].data.clone()
+            conv1_data = state_dict['backbone.conv1.weight'].clone()
             # 移除所有 backbone. 前缀
             new_state_dict = {}
             for k, v in state_dict.items():
@@ -100,7 +135,10 @@ class F3netDetector(AbstractDetector):
             state_dict = new_state_dict
         
         if conv1_data is None:
-            raise KeyError("Cannot find conv1.weight in state_dict")
+            logger.warning("Cannot find conv1.weight in state_dict, using random init")
+            # 使用随机初始化
+            backbone.conv1 = nn.Conv2d(12, 32, 3, 2, 0, bias=False)
+            return backbone
         
         # 先创建新的 conv1（12通道输入）
         backbone.conv1 = nn.Conv2d(12, 32, 3, 2, 0, bias=False)

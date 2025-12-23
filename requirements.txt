@@ -1,28 +1,34 @@
-pip install numpy==1.21.5
-pip install pandas==1.4.2
-pip install Pillow==9.0.1
-pip install imageio==2.9.0
-pip install imgaug==0.4.0
-pip install tqdm==4.61.0
-pip install scipy==1.7.3
-pip install seaborn==0.11.2
-pip install pyyaml==6.0
-pip install imutils==0.5.4
-pip install opencv-python==4.6.0.66
-pip install scikit-image==0.19.2
-pip install scikit-learn==1.0.2
-pip install albumentations==1.1.0
-pip install efficientnet-pytorch==0.7.1
-pip install timm==0.6.12
-pip install segmentation-models-pytorch==0.3.2
-pip install torchtoolbox==0.1.8.2
-pip install tensorboard==2.10.1
-pip install setuptools==59.5.0
-pip install loralib
-pip install einops
-pip install transformers
-pip install filterpy
-pip install kornia
-pip install fvcore
-pip install imgaug==0.4.0
-pip install git+https://github.com/openai/CLIP.git
+numpy==1.23.5
+pandas==1.4.2
+Pillow==9.0.1
+imageio==2.9.0
+imgaug==0.4.0
+tqdm==4.61.0
+scipy==1.10.1
+seaborn==0.11.2
+pyyaml==6.0
+imutils==0.5.4
+# 注意：不要同时安装 opencv-python 和 opencv-python-headless（会互相覆盖/冲突）
+opencv-python==4.6.0.66
+scikit-image==0.19.2
+scikit-learn==1.0.2
+albumentations==1.1.0
+efficientnet-pytorch==0.7.1
+timm==0.6.12
+segmentation-models-pytorch==0.3.2
+torchtoolbox==0.1.8.2
+tensorboard==2.10.1
+setuptools==59.5.0
+loralib
+einops
+transformers
+filterpy
+kornia
+fvcore
+git+https://github.com/openai/CLIP.git
+
+# 关键：避免 protobuf / mediapipe / onnx 互相冲突
+protobuf==3.20.3
+mediapipe==0.9.3.0
+onnx==1.12.0
+onnxruntime==1.14.1

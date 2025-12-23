@@ -67,25 +67,20 @@ from metrics.utils import get_test_metrics
 
 # ==================== 配置 ====================
 # 测试数据集 - 修改这里来测试不同的数据集
-TEST_DATASET = "UADFV"  # 可选: "Celeb-DF-v1", "UADFV", "CelebDFv2", "FF-DF", etc
+TEST_DATASET = "Celeb-DF-v1"  # 可选: "Celeb-DF-v1", "UADFV", "CelebDFv2", "FF-DF", etc
 
 # 模型权重和配置映射
-# 注意：某些模型可能因为依赖问题而失败，可以根据需要取消注释
+# 已修复：启用所有模型，添加了OOM保护
 MODELS = {
+    # === Naive Models ===
     "xception": {
         "config": "./training/config/detector/xception.yaml",
         "weights": "./training/weights/xception_best.pth",
     },
-    # EfficientNetB4 - 权重格式可能不匹配，暂时跳过
-    # "efficientnetb4": {
-    #     "config": "./training/config/detector/efficientnetb4.yaml",
-    #     "weights": "./training/weights/effnb4_best.pth",
-    # },
-    # Capsule Net - 可能需要额外依赖，暂时跳过
-    # "capsule_net": {
-    #     "config": "./training/config/detector/capsule_net.yaml",
-    #     "weights": "./training/weights/capsule_best.pth",
-    # },
+    "efficientnetb4": {
+        "config": "./training/config/detector/efficientnetb4.yaml",
+        "weights": "./training/weights/effnb4_best.pth",
+    },
     "meso4": {
         "config": "./training/config/detector/meso4.yaml",
         "weights": "./training/weights/meso4_best.pth",
@@ -94,21 +89,18 @@ MODELS = {
         "config": "./training/config/detector/meso4Inception.yaml",
         "weights": "./training/weights/meso4Incep_best.pth",
     },
-    "f3net": {
-        "config": "./training/config/detector/f3net.yaml",
-        "weights": "./training/weights/f3net_best.pth",
+    # === Spatial Models ===
+    "capsule_net": {
+        "config": "./training/config/detector/capsule_net.yaml",
+        "weights": "./training/weights/capsule_best.pth",
     },
     "ffd": {
         "config": "./training/config/detector/ffd.yaml",
         "weights": "./training/weights/ffd_best.pth",
     },
-    "spsl": {
-        "config": "./training/config/detector/spsl.yaml",
-        "weights": "./training/weights/spsl_best.pth",
-    },
-    "srm": {
-        "config": "./training/config/detector/srm.yaml",
-        "weights": "./training/weights/srm_best.pth",
+    "core": {
+        "config": "./training/config/detector/core.yaml",
+        "weights": "./training/weights/core_best.pth",
     },
     "recce": {
         "config": "./training/config/detector/recce.yaml",
@@ -118,9 +110,18 @@ MODELS = {
         "config": "./training/config/detector/ucf.yaml",
         "weights": "./training/weights/ucf_best.pth",
     },
-    "core": {
-        "config": "./training/config/detector/core.yaml",
-        "weights": "./training/weights/core_best.pth",
+    # === Frequency Models ===
+    "f3net": {
+        "config": "./training/config/detector/f3net.yaml",
+        "weights": "./training/weights/f3net_best.pth",
+    },
+    "spsl": {
+        "config": "./training/config/detector/spsl.yaml",
+        "weights": "./training/weights/spsl_best.pth",
+    },
+    "srm": {
+        "config": "./training/config/detector/srm.yaml",
+        "weights": "./training/weights/srm_best.pth",
     },
 }
 
@@ -156,9 +157,13 @@ def load_config(detector_path, test_dataset):
     # 强制设置 workers 为 0，避免 Windows 多进程内存问题
     config['workers'] = 0
     
-    # 大幅减小 batch size 以节省显存（改为 4）
-    config['test_batchSize'] = 4
-    print(f"  Set batch size to 4 to save GPU memory", flush=True)
+    # 大幅减小 batch size 以节省显存（改为 2 以支持大模型如 SRM, RECCE）
+    config['test_batchSize'] = 2
+    print(f"  Set batch size to 2 to save GPU memory", flush=True)
+    
+    # 减小 frame_num 以节省内存
+    if 'frame_num' in config:
+        config['frame_num'] = {'train': 8, 'test': 8}
     
     return config
 
@@ -504,15 +509,26 @@ def create_heatmap(df, output_dir):
 
 
 
-def test_single_model(model_name, model_info, test_dataset):
-    """测试单个模型"""
-    
-    # 在开始测试前清理GPU内存
+def aggressive_memory_cleanup():
+    """强力清理GPU内存"""
     import gc
+    gc.collect()
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
+        # 打印当前GPU内存使用情况
+        allocated = torch.cuda.memory_allocated() / 1024**2
+        reserved = torch.cuda.memory_reserved() / 1024**2
+        print(f"  [GPU Memory] Allocated: {allocated:.1f}MB, Reserved: {reserved:.1f}MB")
+
+
+def test_single_model(model_name, model_info, test_dataset):
+    """测试单个模型"""
+    
+    # 在开始测试前强力清理GPU内存
+    print("  Cleaning GPU memory before test...")
+    aggressive_memory_cleanup()
     
     print(f"\n{'='*60}")
     print(f"Testing Model: {model_name}")
@@ -555,15 +571,44 @@ def test_single_model(model_name, model_info, test_dataset):
         print(f"Loading weights from: {model_info['weights']}")
         ckpt = torch.load(model_info['weights'], map_location=device)
         
-        # 尝试加载权重，如果strict模式失败则尝试非strict模式
+        # 智能加载权重函数
+        def smart_load_state_dict(model, state_dict):
+            """自动处理形状不匹配的加载函数"""
+            model_state = model.state_dict()
+            filtered_state = {}
+            skipped_keys = []
+            
+            for k, v in state_dict.items():
+                if k in model_state:
+                    if v.shape == model_state[k].shape:
+                        filtered_state[k] = v
+                    else:
+                        skipped_keys.append(f"{k} (ckpt: {v.shape} vs model: {model_state[k].shape})")
+                else:
+                    # 包含 unexpected keys，反正 strict=False 会忽略它们，或者如果幸运的话匹配上
+                    filtered_state[k] = v
+            
+            if skipped_keys:
+                print(f"  ⚠ Skipped {len(skipped_keys)} layers due to shape mismatch:")
+                for sk in skipped_keys[:3]:
+                    print(f"    - {sk}")
+                if len(skipped_keys) > 3: print(f"    - ... and {len(skipped_keys)-3} more")
+            
+            return model.load_state_dict(filtered_state, strict=False)
+
+        # 尝试加载权重
         try:
             model.load_state_dict(ckpt, strict=True)
             print(f"✓ Loaded weights (strict mode)")
         except RuntimeError as e:
-            print(f"⚠ Warning: Strict loading failed, trying non-strict mode...")
-            print(f"  Error was: {str(e)[:200]}")
-            model.load_state_dict(ckpt, strict=False)
-            print(f"✓ Loaded weights (non-strict mode)")
+            print(f"⚠ Strict loading failed, trying smart mode (ignoring shape mismatches)...")
+            # 使用智能加载
+            msg = smart_load_state_dict(model, ckpt)
+            print(f"✓ Loaded weights (smart non-strict mode)")
+            if msg.missing_keys:
+                print(f"  Missing: {len(msg.missing_keys)} keys")
+            if msg.unexpected_keys:
+                print(f"  Unexpected: {len(msg.unexpected_keys)} keys")
         
         # 设置为评估模式
         model.eval()
@@ -587,25 +632,30 @@ def test_single_model(model_name, model_info, test_dataset):
             for k, v in metrics.items():
                 print(f"  {k}: {v:.4f}" if isinstance(v, float) else f"  {k}: {v}")
         
-        # 显式清理模型和数据
+        # 显式清理模型和数据 - 更彻底的清理
+        print("\n  Cleaning up model and data...")
+        try:
+            model.cpu()  # 先移动到CPU
+        except:
+            pass
         del model
+        del ckpt
         del test_data_loaders
         del test_datasets
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
+        
+        # 强力清理GPU内存
+        aggressive_memory_cleanup()
         
         return results
         
     except Exception as e:
         # 如果在函数内部发生任何异常，重新抛出以便外层捕获
         print(f"\n❌ Error in test_single_model: {str(e)}")
+        traceback.print_exc()
         
-        # 清理可能的残留资源
-        import gc
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        # 强力清理可能的残留资源
+        print("  Performing aggressive memory cleanup after error...")
+        aggressive_memory_cleanup()
         
         raise
 

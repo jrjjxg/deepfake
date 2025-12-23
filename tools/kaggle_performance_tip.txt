@@ -1,0 +1,9 @@
+# 在 Kaggle Notebook 中，将这段代码添加到最前面
+# 可以提升 MediaPipe 和 OpenCV 的性能
+
+import os
+os.environ['OMP_NUM_THREADS'] = '4'  # 使用 4 个线程
+os.environ['MKL_NUM_THREADS'] = '4'
+os.environ['OPENBLAS_NUM_THREADS'] = '4'
+
+# 然后运行主代码

@@ -103,13 +103,27 @@ class SpslDetector(AbstractDetector):
         avg_conv1_data = conv1_data.mean(dim=1, keepdim=True)  # average across the RGB channels
         backbone.conv1.weight.data = avg_conv1_data.repeat(1, 4, 1, 1)  # repeat the averaged weights across the 4 new channels
         
-        # 加载其余权重（使用 strict=False 忽略不匹配的层）
-        missing_keys, unexpected_keys = backbone.load_state_dict(state_dict, strict=False)
+        # 加载其余权重（使用 strict=False 忽略不匹配的层，并添加过滤逻辑）
+        model_state = backbone.state_dict()
+        filtered_state = {}
+        for k, v in state_dict.items():
+            if k in model_state:
+                if v.shape == model_state[k].shape:
+                    filtered_state[k] = v
+                else:
+                    logger.warning(f"Skipping layer {k} due to shape mismatch: ckpt {v.shape} vs model {model_state[k].shape}")
+            else:
+                filtered_state[k] = v # 让strict=False处理unexpected keys
+                
+        missing_keys, unexpected_keys = backbone.load_state_dict(filtered_state, strict=False)
         
         if missing_keys:
             logger.info(f'Missing keys (expected): {missing_keys[:5]}...')
         if unexpected_keys:
-            logger.info(f'Unexpected keys: {unexpected_keys[:5]}...')
+            # 过滤掉我们故意跳过的
+            unexpected_keys = [k for k in unexpected_keys if k not in filtered_state]
+            if unexpected_keys:
+                logger.info(f'Unexpected keys: {unexpected_keys[:5]}...')
         
         logger.info('Load pretrained model from {}'.format(config['pretrained']))
         logger.info('Initialized conv1 for 4-channel input (RGB + Phase)')

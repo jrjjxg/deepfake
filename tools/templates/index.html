@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/style.css?v={{ASSET_VERSION}}">
 </head>
 
 <body>
@@ -27,7 +27,119 @@
                 <button class="tab-btn" onclick="showTab('swap')">
                     人脸替换
                 </button>
+                <button class="tab-btn" onclick="showTab('video-detect')">
+                    视频检测
+                </button>
             </nav>
+
+            <!-- 视频检测页面 -->
+            <div id="video-detect" class="tab-content">
+                <div class="card">
+                    <div class="card-title">基于运动特征的视频检测</div>
+                    <div class="info-box">
+                        <p>此功能使用 SVM 模型分析视频中的<strong>脸部运动特征</strong>，即使是高质量 Deepfake 也可能因细微的运动异常而被检测出来。</p>
+                        <ul style="margin-top:8px; padding-left:20px; color:#4b5563;">
+                            <li><strong>眨眼检测 (EAR)</strong>: 分析眨眼频率和闭眼时长</li>
+                            <li><strong>关键点抖动 (Jitter)</strong>: 分析五官边缘的微小不自然颤动</li>
+                        </ul>
+                    </div>
+
+                    <!-- 输入模式切换 -->
+                    <div class="input-mode-toggle" style="margin-top:20px;">
+                        <div class="card-title">选择输入方式</div>
+                        <div class="mode-buttons" style="display: flex; gap: 10px; margin-bottom: 16px;">
+                            <button class="mode-btn active" id="mode-video-btn" onclick="switchVideoInputMode('video')">
+                                <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="margin-right:6px;">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                                        d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                </svg>
+                                上传视频文件
+                            </button>
+                            <button class="mode-btn" id="mode-frames-btn" onclick="switchVideoInputMode('frames')">
+                                <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="margin-right:6px;">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                                        d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                </svg>
+                                上传视频帧（图片）
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 视频文件上传区域 -->
+                    <div id="video-upload-section">
+                        <div class="card-title">上传视频文件</div>
+                        <div class="upload-box" id="video-drop">
+                            <input type="file" id="video-file" accept="video/*" hidden>
+                            <div class="upload-icon">
+                                <svg width="40" height="40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                                        d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                </svg>
+                            </div>
+                            <div class="upload-text"><strong>点击上传</strong> 或拖拽视频 (建议MP4格式, <50MB)</div>
+                            <video id="video-preview" controls style="display:none; width:100%; max-height:300px; margin-top:10px; border-radius:8px;"></video>
+                            <div id="video-name" style="display:none; margin-top:10px; font-weight:500;"></div>
+                        </div>
+                    </div>
+
+                    <!-- 视频帧上传区域 -->
+                    <div id="frames-upload-section" style="display: none;">
+                        <div class="card-title">上传视频帧图片</div>
+                        <div class="info-box" style="margin-bottom: 12px; background: #eff6ff; border-color: #bfdbfe;">
+                            <p style="margin:0; font-size:13px; color:#1e40af;">
+                                💡 <strong>提示：</strong>上传一系列连续的视频帧图片进行检测。
+                            </p>
+                            <ul style="margin:8px 0 0 0; padding-left:20px; color:#3b82f6; font-size:12px;">
+                                <li>至少需要 <strong>10 帧</strong> 图片</li>
+                                <li>图片应按时间顺序排列（如 frame001.jpg, frame002.jpg...）</li>
+                                <li>建议帧率约 30fps 的采样，覆盖 1-2 秒视频</li>
+                                <li>支持 JPG、PNG、BMP 等常见图片格式</li>
+                            </ul>
+                        </div>
+                        <div class="upload-box frames-upload" id="frames-drop">
+                            <input type="file" id="frames-files" accept="image/*" multiple hidden>
+                            <div class="upload-icon">
+                                <svg width="40" height="40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                                        d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                </svg>
+                            </div>
+                            <div class="upload-text"><strong>点击选择多张图片</strong> 或拖拽图片到这里</div>
+                            <div id="frames-count" style="display:none; margin-top:10px; font-weight:500; color:#16a34a;"></div>
+                        </div>
+                        <div id="frames-preview-grid" class="frames-preview-grid" style="display:none;"></div>
+                    </div>
+
+                    <div class="card-title" style="margin-top:16px;">运动模型选择</div>
+                    <div class="info-box" style="margin-bottom: 12px;">
+                        <p style="margin:0; font-size:13px; color:#4b5563;">
+                            同一个运动特征 SVM 在不同数据集上会有明显域偏移；如果你发现 UADFV real 大量误报，可切换 FF++ 模型或改用“上传视频帧”模式。
+                        </p>
+                    </div>
+                    <select id="video-motion-model" style="width:100%; max-width:360px;">
+                        <option value="celebdfv2" selected>Celeb-DF-v2 (motion_feature_model_celebdf.joblib)</option>
+                        <option value="ffpp">FF++ (motion_feature_model.joblib)</option>
+                    </select>
+
+                    <button class="btn" onclick="runVideoDetect()" id="video-detect-btn">开始分析视频</button>
+
+                    <div id="video-result" class="result"></div>
+                    
+                    <div id="feature-details" style="display:none; margin-top:20px; background:#f9fafb; padding:15px; border-radius:8px; border:1px solid #e5e7eb;">
+                        <h4 style="margin:0 0 10px 0; font-size:16px;">特征分析详情</h4>
+                        <div class="feature-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; font-size:14px;">
+                            <div>
+                                <div style="color:#6b7280; font-size:12px;">眨眼特征 (EAR)</div>
+                                <div id="ear-stats" style="font-family:monospace; font-weight:600;">-</div>
+                            </div>
+                            <div>
+                                <div style="color:#6b7280; font-size:12px;">抖动特征 (Jitter)</div>
+                                <div id="jitter-stats" style="font-family:monospace; font-weight:600;">-</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
             <!-- 检测页面 -->
             <div id="detect" class="tab-content active">
@@ -140,7 +252,7 @@
         </main>
     </div>
 
-    <script src="/static/js/script.js"></script>
+    <script src="/static/js/script.js?v={{ASSET_VERSION}}"></script>
 </body>
 
 </html>

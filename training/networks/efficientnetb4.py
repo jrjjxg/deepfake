@@ -27,12 +27,33 @@ class EfficientNetB4(nn.Module):
         self.dropout = efficientnetb4_config["dropout"]
         self.mode = efficientnetb4_config["mode"]
 
-        # Load the EfficientNet-B4 model without pre-trained weights
-        if efficientnetb4_config['pretrained']:
-            self.efficientnet = EfficientNet.from_pretrained('efficientnet-b4',weights_path=efficientnetb4_config['pretrained'])  # FIXME: load the pretrained weights from online
-        # self.efficientnet = EfficientNet.from_name('efficientnet-b4')
-        else:
+        pretrained_path = efficientnetb4_config.get('pretrained', None)
+        
+        # 判断是否是已训练的检测模型（.pth后缀且包含best）
+        # 如果是，则不从ImageNet加载预训练，而是先创建模型结构
+        if pretrained_path and os.path.exists(pretrained_path) and 'best' in pretrained_path:
+            # 从已训练的检测模型加载，先创建空模型
             self.efficientnet = EfficientNet.from_name('efficientnet-b4')
+            print(f"[EfficientNetB4] Loading from trained detector weights (skip ImageNet pretrain)")
+        elif pretrained_path and os.path.exists(pretrained_path):
+            # 尝试从给定路径加载预训练权重
+            try:
+                self.efficientnet = EfficientNet.from_pretrained('efficientnet-b4', weights_path=pretrained_path)
+            except Exception as e:
+                print(f"[EfficientNetB4] Failed to load pretrained from {pretrained_path}: {e}")
+                print("[EfficientNetB4] Falling back to online pretrained weights...")
+                try:
+                    self.efficientnet = EfficientNet.from_pretrained('efficientnet-b4')
+                except:
+                    print("[EfficientNetB4] Online loading failed, using from_name...")
+                    self.efficientnet = EfficientNet.from_name('efficientnet-b4')
+        else:
+            # 尝试从网络下载预训练权重，如果失败则使用随机初始化
+            try:
+                self.efficientnet = EfficientNet.from_pretrained('efficientnet-b4')
+            except Exception as e:
+                print(f"[EfficientNetB4] Cannot load pretrained: {e}, using from_name")
+                self.efficientnet = EfficientNet.from_name('efficientnet-b4')
         # Modify the first convolutional layer to accept input tensors with 'inc' channels
         self.efficientnet._conv_stem = nn.Conv2d(inc, 48, kernel_size=3, stride=2, bias=False)
 

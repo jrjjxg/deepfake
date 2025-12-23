@@ -25,6 +25,27 @@ from skimage import filters
 import uvicorn
 from fastapi.staticfiles import StaticFiles
 
+# MediaPipe for motion feature extraction (Compatible with 0.8.x - 0.10.x)
+mp_face_mesh_solution = None
+try:
+    import mediapipe as mp
+    # For older mediapipe versions (0.8.x), we MUST access via mp.solutions
+    if hasattr(mp, 'solutions'):
+        mp_face_mesh_solution = mp.solutions.face_mesh
+        print("MediaPipe FaceMesh 加载成功 (Legacy mode)")
+    else:
+        # For newer versions where direct import might be needed but attribute access failed
+        try:
+            from mediapipe.solutions import face_mesh
+            mp_face_mesh_solution = face_mesh
+            print("MediaPipe FaceMesh 加载成功 (Modern mode)")
+        except ImportError:
+             print("警告: 无法加载 mediapipe.solutions.face_mesh")
+except ImportError as e:
+    print(f"警告: MediaPipe 加载失败: {e}")
+except Exception as e:
+    print(f"警告: MediaPipe 初始化异常: {e}")
+
 # InsightFace imports
 import onnxruntime as ort
 from insightface.app import FaceAnalysis
@@ -59,9 +80,31 @@ except ImportError:
     print("警告: 无法导入DETECTOR，检测功能可能不可用")
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TOOLS_ROOT = os.path.dirname(os.path.abspath(__file__))
 DETECTOR_CONFIG_DIR = os.path.join(PROJECT_ROOT, "training", "config", "detector")
 TEST_CONFIG_PATH = os.path.join(PROJECT_ROOT, "training", "config", "test_config.yaml")
 WEIGHTS_DIR = os.path.join(PROJECT_ROOT, "training", "weights")
+
+
+def _resolve_existing_path(*candidates: str) -> str:
+    for p in candidates:
+        if not p:
+            continue
+        p = os.path.normpath(p)
+        if os.path.exists(p):
+            return p
+    return os.path.normpath(candidates[0]) if candidates else ""
+
+
+def resolve_repo_path(path: str) -> str:
+    if not path:
+        return path
+    if os.path.isabs(path):
+        return os.path.normpath(path)
+    return _resolve_existing_path(
+        os.path.join(PROJECT_ROOT, path),
+        os.path.join(TOOLS_ROOT, path),
+    )
 
 # 按类别组织的检测器清单（仅保留已下载权重的模型）
 CATEGORY_ORDER = ["Naive", "Spatial", "Frequency", "MachineLearning"]
@@ -74,32 +117,28 @@ CATEGORY_LABELS = {
 
 RAW_DETECTORS = [
     # Naive
-    {"id": "xception", "label": "Xception", "category": "Naive", "config": "xception.yaml", "weight": "xception_best.pth"},
-    {"id": "meso4", "label": "MesoNet (Meso4)", "category": "Naive", "config": "meso4.yaml", "weight": "meso4_best.pth"},
-    {"id": "meso4Inception", "label": "MesoInception", "category": "Naive", "config": "meso4Inception.yaml", "weight": "meso4Incep_best.pth"},
+    # Removed outdated/ineffective models for high-quality deepfakes: Xception, Meso4, MesoInception
     {"id": "resnet34", "label": "CNN-Aug (ResNet34)", "category": "Naive", "config": "resnet34.yaml", "weight": "cnnaug_best.pth"},
     {"id": "efficientnetb4", "label": "EfficientNet-B4", "category": "Naive", "config": "efficientnetb4.yaml", "weight": "effnb4_best.pth"},
     # Spatial
     {"id": "capsule_net", "label": "Capsule", "category": "Spatial", "config": "capsule_net.yaml", "weight": "capsule_best.pth"},
-    {"id": "ffd", "label": "FFD", "category": "Spatial", "config": "ffd.yaml", "weight": "ffd_best.pth"},
     {"id": "core", "label": "CORE", "category": "Spatial", "config": "core.yaml", "weight": "core_best.pth"},
-    {"id": "recce", "label": "RECCE", "category": "Spatial", "config": "recce.yaml", "weight": "recce_best.pth"},
     {"id": "ucf", "label": "UCF (Xception)", "category": "Spatial", "config": "ucf.yaml", "weight": "ucf_best.pth"},
     # Frequency
-    {"id": "f3net", "label": "F3Net", "category": "Frequency", "config": "f3net.yaml", "weight": "f3net_best.pth"},
     {"id": "spsl", "label": "SPSL", "category": "Frequency", "config": "spsl.yaml", "weight": "spsl_best.pth"},
     {"id": "srm", "label": "SRM", "category": "Frequency", "config": "srm.yaml", "weight": "srm_best.pth"},
     # Machine Learning
-    {"id": "svm_features", "label": "SVM (Image Features)", "category": "MachineLearning", "config": None, "weight": "../image_feature_svm.joblib"},
+    {"id": "svm_features", "label": "SVM (Image Features)", "category": "MachineLearning", "config": None, "weight": "image_feature_svm.joblib"},
+    {"id": "motion_features", "label": "SVM (Motion Features - EAR/Jitter)", "category": "MachineLearning", "config": None, "weight": "motion_feature_model_celebdf.joblib"},
 ]
 
 DETECTOR_CATALOG = []
 for item in RAW_DETECTORS:
-    # Special handling for SVM model
-    if item["id"] == "svm_features":
-        weight_path = os.path.join(PROJECT_ROOT, item["weight"])
+    # Special handling for ML models (SVM, Motion Features)
+    if item["id"] in ["svm_features", "motion_features"]:
+        weight_path = resolve_repo_path(item["weight"])
         if not os.path.exists(weight_path):
-            print(f"警告: 找不到SVM模型文件，已跳过 {item['label']} ({weight_path})")
+            print(f"警告: 找不到ML模型文件，已跳过 {item['label']} ({weight_path})")
             continue
         DETECTOR_CATALOG.append(
             {
@@ -134,6 +173,87 @@ for item in RAW_DETECTORS:
 
 AVAILABLE_MODELS = {item["id"]: item for item in DETECTOR_CATALOG}
 
+# WebUI 中可选的“运动特征”模型（joblib）
+MOTION_MODELS = {
+    "celebdfv2": {
+        "label": "Celeb-DF-v2",
+        "path": resolve_repo_path("motion_feature_model_celebdf.joblib"),
+    },
+    "ffpp": {
+        "label": "FaceForensics++",
+        "path": resolve_repo_path("motion_feature_model.joblib"),
+    },
+}
+
+# 基于目标域（如 UADFV）验证集选取的“工作点”（decision_function fake 方向分数阈值 t）。
+# 为避免前端暴露阈值，同时让进度条与最终判定一致，实际在后端使用 score_used = score_fake - t。
+MOTION_MODEL_SCORE_THRESHOLDS = {
+    # UADFV / Celeb-DF-v2模型：t≈0.0169（几乎等于 0）
+    "celebdfv2": 0.0169,
+    # UADFV / FF++模型：t≈1.3949（Tuned@ACC/Youden），显著降低 real 误报
+    "ffpp": 1.3949,
+}
+
+_MOTION_MODEL_CACHE: dict[str, object] = {}
+
+
+def get_motion_model(model_id: str) -> tuple[str, object]:
+    key = (model_id or "celebdfv2").strip().lower()
+    if key not in MOTION_MODELS:
+        raise ValueError(f"未知 motion_model: {model_id}. 可选: {', '.join(MOTION_MODELS.keys())}")
+    path = MOTION_MODELS[key]["path"]
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"找不到运动模型文件: {path}")
+    if path not in _MOTION_MODEL_CACHE:
+        _MOTION_MODEL_CACHE[path] = joblib.load(path)
+    return path, _MOTION_MODEL_CACHE[path]
+
+
+def _motion_class_indices(model) -> tuple[int, int] | None:
+    """
+    Return (idx_real, idx_fake) for predict_proba columns based on model.classes_.
+    Assumes real=0, fake=1. Returns None if classes_ is missing/unexpected.
+    """
+    classes = getattr(model, "classes_", None)
+    if classes is None:
+        return None
+    try:
+        classes = list(classes)
+        idx_real = classes.index(0)
+        idx_fake = classes.index(1)
+        return idx_real, idx_fake
+    except Exception:
+        return None
+
+
+def _decision_score_to_fake_orientation(model, decision_score: float) -> float:
+    """
+    scikit-learn binary decision_function sign is w.r.t classes_[1].
+    We convert it to a "fake-oriented" score where larger => more likely fake(=1).
+    """
+    classes = getattr(model, "classes_", None)
+    if classes is None:
+        return float(decision_score)
+    try:
+        classes = list(classes)
+        # If classes_[1] is fake(=1), keep; otherwise flip.
+        return float(decision_score) if len(classes) >= 2 and classes[1] == 1 else float(-decision_score)
+    except Exception:
+        return float(decision_score)
+
+
+def _json_safe_classes(model) -> list[int] | None:
+    classes = getattr(model, "classes_", None)
+    if classes is None:
+        return None
+    try:
+        return [int(x) for x in list(classes)]
+    except Exception:
+        return None
+
+
+def _sigmoid(x: float) -> float:
+    return float(1.0 / (1.0 + np.exp(-float(x))))
 
 def build_model_options():
     """按类别生成下拉框选项 HTML。"""
@@ -704,21 +824,82 @@ class InsightFaceService:
 
 
 class ModelManager:
-    def __init__(self, device):
+    def __init__(self, device, max_cached_models=1):
+        """
+        模型管理器，支持缓存和自动清理
+        
+        Args:
+            device: 计算设备
+            max_cached_models: 最大缓存模型数量（默认1，为避免OOM）
+        """
         self.device = device
         self.cache = {}
+        self.max_cached_models = max_cached_models
+        self.load_order = []  # 记录加载顺序用于LRU清理
+
+    def clear_cache(self):
+        """清理所有缓存的模型并释放GPU内存"""
+        import gc
+        for model_name in list(self.cache.keys()):
+            if model_name in self.cache:
+                bundle = self.cache[model_name]
+                if 'model' in bundle:
+                    del bundle['model']
+                del self.cache[model_name]
+        self.load_order.clear()
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        print("[ModelManager] Cache cleared, GPU memory released")
+
+    def _evict_oldest(self):
+        """清理最旧的模型"""
+        import gc
+        if self.load_order:
+            oldest = self.load_order.pop(0)
+            if oldest in self.cache:
+                print(f"[ModelManager] Evicting model: {oldest} to free memory")
+                bundle = self.cache[oldest]
+                if 'model' in bundle:
+                    del bundle['model']
+                del self.cache[oldest]
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
     def get_model(self, model_name):
         if model_name not in AVAILABLE_MODELS:
             raise ValueError(f"未知检测模型: {model_name}")
+        
+        # 如果已缓存，直接返回并更新访问顺序
         if model_name in self.cache:
+            # 更新LRU顺序
+            if model_name in self.load_order:
+                self.load_order.remove(model_name)
+            self.load_order.append(model_name)
             return self.cache[model_name]
+        
+        # 检查是否需要清理
+        while len(self.cache) >= self.max_cached_models:
+            self._evict_oldest()
 
         cfg_paths = AVAILABLE_MODELS[model_name]
         cfg = load_config(cfg_paths["detector_cfg"], cfg_paths["test_cfg"])
-        model = build_model(cfg, cfg_paths["weights_path"], self.device)
+        
+        try:
+            model = build_model(cfg, cfg_paths["weights_path"], self.device)
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower() or "CUDA" in str(e):
+                print(f"[ModelManager] OOM detected, clearing all cache and retrying...")
+                self.clear_cache()
+                model = build_model(cfg, cfg_paths["weights_path"], self.device)
+            else:
+                raise
+        
         bundle = {"cfg": cfg, "model": model}
         self.cache[model_name] = bundle
+        self.load_order.append(model_name)
         return bundle
 
 
@@ -929,6 +1110,376 @@ def extract_svm_features(image: np.ndarray) -> np.ndarray:
     return np.array(all_features, dtype=np.float32)
 
 
+def extract_motion_features_from_video(video_bytes: bytes, return_info: bool = False):
+    """
+    从视频中提取运动特征（EAR眨眼 + 关键点抖动）
+    
+    参数:
+        video_bytes: 视频文件的字节数据
+    
+    返回:
+        特征向量 (numpy.ndarray) - 59维
+    """
+    import tempfile
+    from collections import defaultdict
+    from scipy.stats import skew, kurtosis
+    
+    # Check if mediapipe is available
+    if mp_face_mesh_solution is None:
+        raise RuntimeError("MediaPipe FaceMesh 模块未能加载，无法提取运动特征")
+    
+    # Use the globally imported solution
+    face_mesh_solution = mp_face_mesh_solution
+    LEFT_EYE_INDICES = [362, 385, 387, 263, 373, 380]
+    RIGHT_EYE_INDICES = [33, 160, 158, 133, 153, 144]
+    JITTER_LANDMARKS = {
+        'nose_tip': 1, 'left_eye_outer': 263, 'right_eye_outer': 33,
+        'left_mouth': 61, 'right_mouth': 291, 'chin': 152,
+        'left_eyebrow': 70, 'right_eyebrow': 300
+    }
+    EAR_THRESHOLD = 0.21
+    BLINK_CONSEC_FRAMES = 2
+    MAX_FRAMES = 60
+    MIN_FRAMES = 10
+    
+    def compute_ear(eye_landmarks):
+        v1 = np.linalg.norm(eye_landmarks[1] - eye_landmarks[5])
+        v2 = np.linalg.norm(eye_landmarks[2] - eye_landmarks[4])
+        h = np.linalg.norm(eye_landmarks[0] - eye_landmarks[3])
+        return (v1 + v2) / (2.0 * h) if h > 1e-6 else 0.0
+    
+    # 保存视频到临时文件
+    with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as tmp:
+        tmp.write(video_bytes)
+        tmp_path = tmp.name
+    
+    try:
+        cap = cv2.VideoCapture(tmp_path)
+        if not cap.isOpened():
+            raise ValueError("无法打开视频文件")
+        
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if total_frames < MIN_FRAMES:
+            raise ValueError(f"视频帧数太少（{total_frames}帧），需要至少{MIN_FRAMES}帧")
+        
+        # 采样帧索引
+        if total_frames > MAX_FRAMES:
+            frame_indices = np.linspace(0, total_frames - 1, MAX_FRAMES, dtype=int)
+        else:
+            frame_indices = list(range(total_frames))
+        
+        ear_values = []
+        jitter_sequences = defaultdict(list)
+        
+        with face_mesh_solution.FaceMesh(
+            static_image_mode=False,
+            max_num_faces=1,
+            refine_landmarks=True,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5
+        ) as face_mesh:
+            
+            frame_idx = 0
+            sample_idx = 0
+            
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                
+                if sample_idx < len(frame_indices) and frame_idx == frame_indices[sample_idx]:
+                    sample_idx += 1
+                    
+                    h, w, _ = frame.shape
+                    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    results = face_mesh.process(rgb_frame)
+                    
+                    if results.multi_face_landmarks:
+                        face_landmarks = results.multi_face_landmarks[0]
+                        
+                        # 提取眼睛关键点
+                        left_eye = np.array([[int(face_landmarks.landmark[idx].x * w), 
+                                             int(face_landmarks.landmark[idx].y * h)] 
+                                            for idx in LEFT_EYE_INDICES], dtype=np.float32)
+                        right_eye = np.array([[int(face_landmarks.landmark[idx].x * w), 
+                                              int(face_landmarks.landmark[idx].y * h)] 
+                                             for idx in RIGHT_EYE_INDICES], dtype=np.float32)
+                        
+                        # 计算 EAR
+                        left_ear = compute_ear(left_eye)
+                        right_ear = compute_ear(right_eye)
+                        avg_ear = (left_ear + right_ear) / 2.0
+                        ear_values.append(avg_ear)
+                        
+                        # 提取抖动关键点
+                        for name, idx in JITTER_LANDMARKS.items():
+                            lm = face_landmarks.landmark[idx]
+                            jitter_sequences[name].append(np.array([lm.x * w, lm.y * h], dtype=np.float32))
+                
+                frame_idx += 1
+        
+        cap.release()
+        
+        if len(ear_values) < MIN_FRAMES:
+            raise ValueError(f"有效帧数太少（{len(ear_values)}帧），可能是未检测到人脸")
+        
+        # 计算 EAR 特征
+        ear_array = np.array(ear_values)
+        ear_mean = np.mean(ear_array)
+        ear_std = np.std(ear_array)
+        ear_min = np.min(ear_array)
+        ear_max = np.max(ear_array)
+        ear_range = ear_max - ear_min
+        
+        # 眨眼检测
+        blink_count = 0
+        below_threshold_count = 0
+        for ear in ear_array:
+            if ear < EAR_THRESHOLD:
+                below_threshold_count += 1
+            else:
+                if below_threshold_count >= BLINK_CONSEC_FRAMES:
+                    blink_count += 1
+                below_threshold_count = 0
+        
+        # 与训练脚本保持一致：假设采样后的 60 帧约对应单位时间窗口
+        blink_rate = blink_count / (len(ear_array) / 60.0) if len(ear_array) > 0 else 0
+        ear_skewness = skew(ear_array) if len(ear_array) > 2 else 0
+        ear_kurtosis = kurtosis(ear_array) if len(ear_array) > 3 else 0
+        
+        ear_diff = np.diff(ear_array)
+        ear_velocity_mean = np.mean(np.abs(ear_diff)) if len(ear_diff) > 0 else 0
+        ear_velocity_std = np.std(ear_diff) if len(ear_diff) > 0 else 0
+        
+        ear_features = [
+            ear_mean, ear_std, ear_min, ear_max, ear_range,
+            blink_count, blink_rate,
+            ear_skewness, ear_kurtosis,
+            ear_velocity_mean, ear_velocity_std
+        ]
+        
+        # 计算抖动特征
+        jitter_features = []
+        for name in JITTER_LANDMARKS.keys():
+            if name not in jitter_sequences or len(jitter_sequences[name]) < 3:
+                jitter_features.extend([0.0] * 6)
+                continue
+            
+            points = np.array(jitter_sequences[name])
+            
+            # 全局运动补偿
+            if 'nose_tip' in jitter_sequences and len(jitter_sequences['nose_tip']) == len(points):
+                nose_points = np.array(jitter_sequences['nose_tip'])
+                points = points - nose_points
+            
+            displacements = np.linalg.norm(np.diff(points, axis=0), axis=1)
+            
+            if len(displacements) > 0:
+                disp_mean = np.mean(displacements)
+                disp_std = np.std(displacements)
+                disp_max = np.max(displacements)
+                
+                if len(displacements) > 1:
+                    accelerations = np.abs(np.diff(displacements))
+                    accel_mean = np.mean(accelerations)
+                    accel_std = np.std(accelerations)
+                    accel_max = np.max(accelerations)
+                else:
+                    accel_mean, accel_std, accel_max = 0, 0, 0
+            else:
+                disp_mean, disp_std, disp_max = 0, 0, 0
+                accel_mean, accel_std, accel_max = 0, 0, 0
+            
+            jitter_features.extend([
+                disp_mean, disp_std, disp_max,
+                accel_mean, accel_std, accel_max
+            ])
+        
+        features = np.array(ear_features + jitter_features, dtype=np.float32)
+        if return_info:
+            return features, {
+                "total_frames": int(total_frames),
+                "sampled_frames": int(len(frame_indices)),
+                "valid_frames": int(len(ear_values)),
+            }
+        return features
+        
+    finally:
+        os.remove(tmp_path)
+
+
+def extract_motion_features_from_frames(frames: list, return_info: bool = False):
+    """
+    从一系列视频帧（图片）中提取运动特征（EAR眨眼 + 关键点抖动）
+    
+    参数:
+        frames: 图片帧列表，每个元素是 numpy.ndarray (BGR格式)
+    
+    返回:
+        特征向量 (numpy.ndarray) - 59维
+    """
+    from collections import defaultdict
+    from scipy.stats import skew, kurtosis
+    
+    # Check if mediapipe is available
+    if mp_face_mesh_solution is None:
+        raise RuntimeError("MediaPipe FaceMesh 模块未能加载，无法提取运动特征")
+    
+    # Use the globally imported solution
+    face_mesh_solution = mp_face_mesh_solution
+    LEFT_EYE_INDICES = [362, 385, 387, 263, 373, 380]
+    RIGHT_EYE_INDICES = [33, 160, 158, 133, 153, 144]
+    JITTER_LANDMARKS = {
+        'nose_tip': 1, 'left_eye_outer': 263, 'right_eye_outer': 33,
+        'left_mouth': 61, 'right_mouth': 291, 'chin': 152,
+        'left_eyebrow': 70, 'right_eyebrow': 300
+    }
+    EAR_THRESHOLD = 0.21
+    BLINK_CONSEC_FRAMES = 2
+    MAX_FRAMES = 60
+    MIN_FRAMES = 10
+    
+    def compute_ear(eye_landmarks):
+        v1 = np.linalg.norm(eye_landmarks[1] - eye_landmarks[5])
+        v2 = np.linalg.norm(eye_landmarks[2] - eye_landmarks[4])
+        h = np.linalg.norm(eye_landmarks[0] - eye_landmarks[3])
+        return (v1 + v2) / (2.0 * h) if h > 1e-6 else 0.0
+    
+    if len(frames) < MIN_FRAMES:
+        raise ValueError(f"帧数太少（{len(frames)}帧），需要至少{MIN_FRAMES}帧")
+    
+    # 采样帧
+    if len(frames) > MAX_FRAMES:
+        frame_indices = np.linspace(0, len(frames) - 1, MAX_FRAMES, dtype=int)
+        sampled_frames = [frames[i] for i in frame_indices]
+    else:
+        sampled_frames = frames
+    
+    ear_values = []
+    jitter_sequences = defaultdict(list)
+    
+    with face_mesh_solution.FaceMesh(
+        static_image_mode=True,  # 对于独立图片使用静态模式
+        max_num_faces=1,
+        refine_landmarks=True,
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5
+    ) as face_mesh:
+        
+        for frame in sampled_frames:
+            if frame is None:
+                continue
+                
+            h, w = frame.shape[:2]
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = face_mesh.process(rgb_frame)
+            
+            if results.multi_face_landmarks:
+                face_landmarks = results.multi_face_landmarks[0]
+                
+                # 提取眼睛关键点
+                left_eye = np.array([[int(face_landmarks.landmark[idx].x * w), 
+                                     int(face_landmarks.landmark[idx].y * h)] 
+                                    for idx in LEFT_EYE_INDICES], dtype=np.float32)
+                right_eye = np.array([[int(face_landmarks.landmark[idx].x * w), 
+                                      int(face_landmarks.landmark[idx].y * h)] 
+                                     for idx in RIGHT_EYE_INDICES], dtype=np.float32)
+                
+                # 计算 EAR
+                left_ear = compute_ear(left_eye)
+                right_ear = compute_ear(right_eye)
+                avg_ear = (left_ear + right_ear) / 2.0
+                ear_values.append(avg_ear)
+                
+                # 提取抖动关键点
+                for name, idx in JITTER_LANDMARKS.items():
+                    lm = face_landmarks.landmark[idx]
+                    jitter_sequences[name].append(np.array([lm.x * w, lm.y * h], dtype=np.float32))
+    
+    if len(ear_values) < MIN_FRAMES:
+        raise ValueError(f"有效帧数太少（{len(ear_values)}帧），可能是未检测到人脸")
+    
+    # 计算 EAR 特征
+    ear_array = np.array(ear_values)
+    ear_mean = np.mean(ear_array)
+    ear_std = np.std(ear_array)
+    ear_min = np.min(ear_array)
+    ear_max = np.max(ear_array)
+    ear_range = ear_max - ear_min
+    
+    # 眨眼检测
+    blink_count = 0
+    below_threshold_count = 0
+    for ear in ear_array:
+        if ear < EAR_THRESHOLD:
+            below_threshold_count += 1
+        else:
+            if below_threshold_count >= BLINK_CONSEC_FRAMES:
+                blink_count += 1
+            below_threshold_count = 0
+    
+    # 与训练脚本保持一致：假设采样后的 60 帧约对应单位时间窗口
+    blink_rate = blink_count / (len(ear_array) / 60.0) if len(ear_array) > 0 else 0
+    ear_skewness = skew(ear_array) if len(ear_array) > 2 else 0
+    ear_kurtosis = kurtosis(ear_array) if len(ear_array) > 3 else 0
+    
+    ear_diff = np.diff(ear_array)
+    ear_velocity_mean = np.mean(np.abs(ear_diff)) if len(ear_diff) > 0 else 0
+    ear_velocity_std = np.std(ear_diff) if len(ear_diff) > 0 else 0
+    
+    ear_features = [
+        ear_mean, ear_std, ear_min, ear_max, ear_range,
+        blink_count, blink_rate,
+        ear_skewness, ear_kurtosis,
+        ear_velocity_mean, ear_velocity_std
+    ]
+    
+    # 计算抖动特征
+    jitter_features = []
+    for name in JITTER_LANDMARKS.keys():
+        if name not in jitter_sequences or len(jitter_sequences[name]) < 3:
+            jitter_features.extend([0.0] * 6)
+            continue
+        
+        points = np.array(jitter_sequences[name])
+        
+        # 全局运动补偿
+        if 'nose_tip' in jitter_sequences and len(jitter_sequences['nose_tip']) == len(points):
+            nose_points = np.array(jitter_sequences['nose_tip'])
+            points = points - nose_points
+        
+        displacements = np.linalg.norm(np.diff(points, axis=0), axis=1)
+        
+        if len(displacements) > 0:
+            disp_mean = np.mean(displacements)
+            disp_std = np.std(displacements)
+            disp_max = np.max(displacements)
+            
+            if len(displacements) > 1:
+                accelerations = np.abs(np.diff(displacements))
+                accel_mean = np.mean(accelerations)
+                accel_std = np.std(accelerations)
+                accel_max = np.max(accelerations)
+            else:
+                accel_mean, accel_std, accel_max = 0, 0, 0
+        else:
+            disp_mean, disp_std, disp_max = 0, 0, 0
+            accel_mean, accel_std, accel_max = 0, 0, 0
+        
+        jitter_features.extend([
+            disp_mean, disp_std, disp_max,
+            accel_mean, accel_std, accel_max
+        ])
+    
+    features = np.array(ear_features + jitter_features, dtype=np.float32)
+    if return_info:
+        return features, {
+            "uploaded_frames": int(len(frames)),
+            "sampled_frames": int(len(sampled_frames)),
+            "valid_frames": int(len(ear_values)),
+        }
+    return features
+
 
 def main():
     parser = argparse.ArgumentParser(description="DeepfakeBench WebUI")
@@ -974,7 +1525,24 @@ def main():
         if os.path.exists(template_path):
             with open(template_path, "r", encoding="utf-8") as f:
                 content = f.read()
-            return HTMLResponse(content)
+
+            # Cache-busting: 注入静态资源版本号，避免浏览器缓存旧的 script.js / style.css
+            try:
+                script_path = os.path.join(static_dir, "js", "script.js")
+                css_path = os.path.join(static_dir, "css", "style.css")
+                mtimes = []
+                for p in (template_path, script_path, css_path):
+                    if os.path.exists(p):
+                        mtimes.append(os.path.getmtime(p))
+                asset_version = str(int(max(mtimes))) if mtimes else "0"
+            except Exception:
+                asset_version = "0"
+
+            content = content.replace("{{ASSET_VERSION}}", asset_version)
+
+            resp = HTMLResponse(content)
+            resp.headers["Cache-Control"] = "no-store"
+            return resp
         return HTMLResponse("<h1>Error: Template not found</h1>")
 
     @app.get("/api/models")
@@ -1049,6 +1617,13 @@ def main():
                 except Exception as pred_exc:
                     return JSONResponse({"error": f"SVM预测失败: {pred_exc}"}, status_code=500)
             
+            # Special handling for Motion Features model (requires video)
+            if model_name == "motion_features":
+                return JSONResponse({
+                    "error": "运动特征模型需要视频输入，请使用 /api/predict_video 接口上传视频文件",
+                    "note": "此模型分析眨眼频率(EAR)和面部关键点抖动(Jitter)，无法对单张图片进行检测"
+                }, status_code=400)
+            
             # Normal deep learning model handling
             if not DETECTOR:
                 return JSONResponse({"error": "检测模型未加载，请检查模型配置"}, status_code=500)
@@ -1098,6 +1673,253 @@ def main():
             
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
+        except Exception as exc:
+            # 关键：把完整异常信息输出到终端，并返回到前端，方便定位 500 原因
+            print("\n[ERROR] /api/predict 发生异常，详细堆栈如下：")
+            traceback.print_exc()
+            return JSONResponse(
+                {
+                    "error": str(exc),
+                    "traceback": traceback.format_exc(),
+                },
+                status_code=500,
+            )
+
+    @app.post("/api/predict_video")
+    async def api_predict_video(
+        video: UploadFile = File(...),
+        motion_model: str = Form("celebdfv2", description="可选: 选择运动特征 joblib 模型（celebdfv2/ffpp）"),
+    ):
+        """
+        使用运动特征模型对视频进行深伪检测
+        
+        分析视频中的眨眼频率(EAR)和面部关键点抖动(Jitter)
+        """
+        try:
+            try:
+                motion_model_id = (motion_model or "celebdfv2").strip().lower()
+                model_path, motion_model_obj = get_motion_model(motion_model_id)
+            except ValueError as exc:
+                return JSONResponse(
+                    {
+                        "error": str(exc),
+                        "available_motion_models": {k: v.get("label") for k, v in MOTION_MODELS.items()},
+                    },
+                    status_code=400,
+                )
+            except FileNotFoundError as exc:
+                return JSONResponse({"error": str(exc)}, status_code=500)
+            except Exception as exc:
+                return JSONResponse({"error": f"运动特征模型加载失败: {exc}"}, status_code=500)
+            
+            # Read video
+            video_bytes = await video.read()
+            
+            if len(video_bytes) == 0:
+                return JSONResponse({"error": "视频文件为空"}, status_code=400)
+            
+            # Extract motion features
+            try:
+                features, extract_info = extract_motion_features_from_video(video_bytes, return_info=True)
+                features = features.reshape(1, -1)  # Shape: (1, 59)
+            except ValueError as feat_exc:
+                return JSONResponse({"error": f"特征提取失败: {feat_exc}"}, status_code=400)
+            except Exception as feat_exc:
+                return JSONResponse({"error": f"特征提取失败: {feat_exc}"}, status_code=500)
+            
+            # Predict
+            try:
+                # 0=Real, 1=Fake
+                prediction = motion_model_obj.predict(features)[0]
+                
+                # 决策分数（用于展示/比较，不使用 predict_proba 当概率）
+                decision_score = None
+                if hasattr(motion_model_obj, 'decision_function'):
+                    try:
+                        decision_score = float(motion_model_obj.decision_function(features)[0])
+                    except Exception:
+                        decision_score = None
+
+                score_fake = None
+                if decision_score is not None:
+                    score_fake = _decision_score_to_fake_orientation(motion_model_obj, decision_score)
+                    threshold = float(MOTION_MODEL_SCORE_THRESHOLDS.get(motion_model_id, 0.0))
+                    score_used = score_fake - threshold
+                    prob_fake = _sigmoid(score_used)
+                    prob_real = 1.0 - prob_fake
+                else:
+                    score_used = None
+                    # 极少数模型没有 decision_function：退化为 0/1
+                    prob_fake = 1.0 if prediction == 1 else 0.0
+                    prob_real = 1.0 - prob_fake
+
+                response_payload = {
+                    "fake": prob_fake,
+                    "real": prob_real,
+                    "score": score_used,
+                    "label": ("fake" if score_used >= 0.0 else "real") if score_used is not None else ("fake" if prediction == 1 else "real"),
+                    "note": "使用运动特征检测（EAR+Jitter）模型",
+                    "motion_model": {
+                        "id": motion_model_id,
+                        "file": os.path.basename(model_path),
+                        "label": MOTION_MODELS.get(motion_model_id, {}).get("label"),
+                    },
+                    "input_info": {
+                        **(extract_info or {}),
+                        "motion_model_id": motion_model_id,
+                        "motion_model_file": os.path.basename(model_path),
+                        "classes": _json_safe_classes(motion_model_obj),
+                        "prob_source": "sigmoid(decision_function-shift)" if score_used is not None else "hard_pred",
+                    },
+                    "features": {
+                        "ear_features": 11,
+                        "jitter_features": 48,
+                        "total": 59
+                    }
+                }
+                
+                return JSONResponse(response_payload)
+                
+            except Exception as pred_exc:
+                return JSONResponse({"error": f"预测失败: {pred_exc}"}, status_code=500)
+        
+        except Exception as exc:
+            traceback.print_exc()
+            return JSONResponse({"error": str(exc)}, status_code=500)
+
+    @app.post("/api/predict_video_frames")
+    async def api_predict_video_frames(
+        frames: list[UploadFile] = File(..., description="视频帧图片列表（至少10帧）"),
+        motion_model: str = Form("celebdfv2", description="可选: 选择运动特征 joblib 模型（celebdfv2/ffpp）"),
+    ):
+        """
+        使用运动特征模型对一系列视频帧进行深伪检测
+        
+        上传一系列图片帧（按时间顺序），系统将分析眨眼频率(EAR)和面部关键点抖动(Jitter)
+        
+        要求:
+        - 至少上传10帧图片
+        - 图片应按时间顺序排列
+        - 建议帧率约为30fps的采样（每秒约30帧）
+        - 支持常见图片格式: jpg, png, bmp等
+        """
+        try:
+            try:
+                motion_model_id = (motion_model or "celebdfv2").strip().lower()
+                model_path, motion_model_obj = get_motion_model(motion_model_id)
+            except ValueError as exc:
+                return JSONResponse(
+                    {
+                        "error": str(exc),
+                        "available_motion_models": {k: v.get("label") for k, v in MOTION_MODELS.items()},
+                    },
+                    status_code=400,
+                )
+            except FileNotFoundError as exc:
+                return JSONResponse({"error": str(exc)}, status_code=500)
+            except Exception as exc:
+                return JSONResponse({"error": f"运动特征模型加载失败: {exc}"}, status_code=500)
+            
+            # 验证帧数
+            if len(frames) < 10:
+                return JSONResponse({
+                    "error": f"帧数不足，当前上传了 {len(frames)} 帧，至少需要10帧",
+                    "note": "请上传更多的视频帧图片以进行运动特征分析"
+                }, status_code=400)
+            
+            # 读取并解码所有帧
+            decoded_frames = []
+            for i, frame_file in enumerate(frames):
+                try:
+                    content = await frame_file.read()
+                    if len(content) == 0:
+                        print(f"警告: 第 {i+1} 帧为空，跳过")
+                        continue
+                    
+                    nparr = np.frombuffer(content, np.uint8)
+                    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                    
+                    if img is None:
+                        print(f"警告: 第 {i+1} 帧解码失败，跳过")
+                        continue
+                    
+                    decoded_frames.append(img)
+                except Exception as decode_exc:
+                    print(f"警告: 第 {i+1} 帧处理失败: {decode_exc}")
+                    continue
+            
+            if len(decoded_frames) < 10:
+                return JSONResponse({
+                    "error": f"有效帧数不足，成功解码 {len(decoded_frames)} 帧，至少需要10帧",
+                    "note": "请确保上传的图片格式正确（jpg/png/bmp等）"
+                }, status_code=400)
+            
+            # Extract motion features from frames
+            try:
+                features, extract_info = extract_motion_features_from_frames(decoded_frames, return_info=True)
+                features = features.reshape(1, -1)  # Shape: (1, 59)
+            except ValueError as feat_exc:
+                return JSONResponse({"error": f"特征提取失败: {feat_exc}"}, status_code=400)
+            except Exception as feat_exc:
+                return JSONResponse({"error": f"特征提取失败: {feat_exc}"}, status_code=500)
+            
+            # Predict
+            try:
+                # 0=Real, 1=Fake
+                prediction = motion_model_obj.predict(features)[0]
+
+                # 决策分数（用于展示/比较，不使用 predict_proba 当概率）
+                decision_score = None
+                if hasattr(motion_model_obj, 'decision_function'):
+                    try:
+                        decision_score = float(motion_model_obj.decision_function(features)[0])
+                    except Exception:
+                        decision_score = None
+                
+                score_fake = None
+                if decision_score is not None:
+                    score_fake = _decision_score_to_fake_orientation(motion_model_obj, decision_score)
+                    threshold = float(MOTION_MODEL_SCORE_THRESHOLDS.get(motion_model_id, 0.0))
+                    score_used = score_fake - threshold
+                    prob_fake = _sigmoid(score_used)
+                    prob_real = 1.0 - prob_fake
+                else:
+                    score_used = None
+                    prob_fake = 1.0 if prediction == 1 else 0.0
+                    prob_real = 1.0 - prob_fake
+
+                payload = {
+                    "fake": prob_fake,
+                    "real": prob_real,
+                    "score": score_used,
+                    "label": ("fake" if score_used >= 0.0 else "real") if score_used is not None else ("fake" if prediction == 1 else "real"),
+                    "note": f"使用 {len(decoded_frames)} 帧图片进行运动特征检测（EAR+Jitter）",
+                    "motion_model": {
+                        "id": motion_model_id,
+                        "file": os.path.basename(model_path),
+                        "label": MOTION_MODELS.get(motion_model_id, {}).get("label"),
+                    },
+                    "input_info": {
+                        **(extract_info or {}),
+                        "uploaded_frames": len(frames),
+                        "decoded_frames": len(decoded_frames),
+                        "motion_model_id": motion_model_id,
+                        "motion_model_file": os.path.basename(model_path),
+                        "classes": _json_safe_classes(motion_model_obj),
+                        "prob_source": "sigmoid(decision_function-shift)" if score_used is not None else "hard_pred",
+                    },
+                    "features": {
+                        "ear_features": 11,
+                        "jitter_features": 48,
+                        "total": 59
+                    }
+                }
+
+                return JSONResponse(payload)
+
+            except Exception as pred_exc:
+                return JSONResponse({"error": f"预测失败: {pred_exc}"}, status_code=500)
+        
         except Exception as exc:
             traceback.print_exc()
             return JSONResponse({"error": str(exc)}, status_code=500)
